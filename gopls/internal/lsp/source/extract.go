@@ -1158,14 +1158,17 @@ func generateReturnInfo(enclosing *ast.FuncType, pkg *types.Package, path []ast.
 	var retVars []*returnVariable
 	var cond *ast.Ident
 	if !hasNonNestedReturns {
-		// Generate information for the added bool value.
-		name, _ := generateAvailableIdentifier(pos, file, path, pkg, info, "shouldReturn", 0)
-		cond = &ast.Ident{Name: name}
-		retVars = append(retVars, &returnVariable{
-			name:    cond,
-			decl:    &ast.Field{Type: ast.NewIdent("bool")},
-			zeroVal: ast.NewIdent("false"),
-		})
+		// TODO: turn this off only if we follow err return rules consistently
+		if false {
+			// Generate information for the added bool value.
+			name, _ := generateAvailableIdentifier(pos, file, path, pkg, info, "shouldReturn", 0)
+			cond = &ast.Ident{Name: name}
+			retVars = append(retVars, &returnVariable{
+				name:    cond,
+				decl:    &ast.Field{Type: ast.NewIdent("bool")},
+				zeroVal: ast.NewIdent("false"),
+			})
+		}
 	}
 	// Generate information for the values in the return signature of the enclosing function.
 	if enclosing.Results != nil {
@@ -1180,8 +1183,15 @@ func generateReturnInfo(enclosing *ast.FuncType, pkg *types.Package, path []ast.
 			if expr == nil {
 				return nil, nil, fmt.Errorf("nil AST expression")
 			}
+			varNameTemplate := "returnValue"
+			if typ.String() == "error" {
+				varNameTemplate = "err"
+			}
 			var name string
-			name, idx = generateAvailableIdentifier(pos, file, path, pkg, info, "returnValue", idx)
+			name, idx = generateAvailableIdentifier(pos, file, path, pkg, info, varNameTemplate, idx)
+			if typ.String() == "error" {
+				cond = &ast.Ident{Name: name}
+			}
 			retVars = append(retVars, &returnVariable{
 				name:    ast.NewIdent(name),
 				decl:    &ast.Field{Type: expr},
@@ -1191,13 +1201,26 @@ func generateReturnInfo(enclosing *ast.FuncType, pkg *types.Package, path []ast.
 	}
 	var ifReturn *ast.IfStmt
 	if !hasNonNestedReturns {
-		// Create the return statement for the enclosing function. We must exclude the variable
-		// for the condition of the if statement (cond) from the return statement.
+		// TODO: make this conditional... but for now, we want to say "if err != nil"
 		ifReturn = &ast.IfStmt{
-			Cond: cond,
-			Body: &ast.BlockStmt{
-				List: []ast.Stmt{&ast.ReturnStmt{Results: getNames(retVars)[1:]}},
+			Cond: &ast.BinaryExpr{
+				X:  cond,
+				Op: token.NEQ,
+				Y:  ast.NewIdent("nil"),
 			},
+			Body: &ast.BlockStmt{
+				List: []ast.Stmt{&ast.ReturnStmt{Results: getNames(retVars)}},
+			},
+		}
+		if false {
+			// Create the return statement for the enclosing function. We must exclude the variable
+			// for the condition of the if statement (cond) from the return statement.
+			ifReturn = &ast.IfStmt{
+				Cond: cond,
+				Body: &ast.BlockStmt{
+					List: []ast.Stmt{&ast.ReturnStmt{Results: getNames(retVars)[1:]}},
+				},
+			}
 		}
 	}
 	return retVars, ifReturn, nil
@@ -1228,7 +1251,10 @@ func adjustReturnStatements(returnTypes []*ast.Field, seenVars map[types.Object]
 	// extracted function. We set the bool to 'true' because, if these return statements
 	// execute, the extracted function terminates early, and the enclosing function must
 	// return as well.
-	zeroVals = append(zeroVals, ast.NewIdent("true"))
+	// TODO: make this conditional on following err return rules
+	if false {
+		zeroVals = append(zeroVals, ast.NewIdent("true"))
+	}
 	ast.Inspect(extractedBlock, func(n ast.Node) bool {
 		if n == nil {
 			return false
